@@ -63,7 +63,7 @@ optimizer = torch.optim.Adam(net.parameters(), lr=learning_rate)
 optimizer.zero_grad()
 
 t_end = Ts
-epochs = 300
+epochs = 700
 lossp = np.zeros(epochs)
 for epoch in range(epochs):
     optimizer.zero_grad()

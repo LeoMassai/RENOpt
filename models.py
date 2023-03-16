@@ -9,6 +9,7 @@ Created on Mon Mar  6 11:24:52 2023
 import numpy as np  # linear algebra
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.autograd import Variable
 from cvxpylayers.torch import CvxpyLayer
 import cvxpy as cp
@@ -38,6 +39,85 @@ class RNNModel(nn.Module):
         out=self.fc(out)
         out=out.squeeze()
         return out
+
+
+class REN(nn.Module):
+    def __init__(self, n, m, n_xi, l):
+        super().__init__()
+        self.n = n  # nel paper m
+        self.n_xi = n_xi  # nel paper n
+        self.l = l  # nel paper q
+        self.m = m  # nel paper p
+        # # # # # # # # # Training parameters # # # # # # # # #
+        # Auxiliary matrices:
+        std = 1
+        self.X = nn.Parameter((torch.randn(2*n_xi+l, 2*n_xi+l)*std))
+        self.Y = nn.Parameter((torch.randn(n_xi, n_xi)*std))  # Y1 nel paper
+        # NN state dynamics:
+        self.B2 = nn.Parameter((torch.randn(n_xi, n)*std))
+        # NN output:
+        self.C2 = nn.Parameter((torch.randn(m, n_xi)*std))
+        self.D21 = nn.Parameter((torch.randn(m, l)*std))
+        self.D22 = nn.Parameter((torch.randn(m, n)*std))
+        # v signal:
+        self.D12 = nn.Parameter((torch.randn(l, n)*std))
+        # bias:
+        # self.bxi = nn.Parameter(torch.randn(n_xi))
+        # self.bv = nn.Parameter(torch.randn(l))
+        # self.bu = nn.Parameter(torch.randn(m))
+        # # # # # # # # # Non-trainable parameters # # # # # # # # #
+        # Auxiliary elements
+        self.epsilon = 0.001
+        self.F = torch.zeros(n_xi, n_xi)
+        self.B1 = torch.zeros(n_xi, l)
+        self.E = torch.zeros(n_xi, n_xi)
+        self.Lambda = torch.ones(l)
+        self.C1 = torch.zeros(l, n_xi)
+        self.D11 = torch.zeros(l, l)
+        self.set_model_param()
+
+    def set_model_param(self):
+        n_xi = self.n_xi
+        l = self.l
+        H = torch.matmul(self.X.T, self.X) + self.epsilon * torch.eye(2*n_xi+l)
+        h1, h2, h3 = torch.split(H, (n_xi, l, n_xi), dim=0)
+        H11, H12, H13 = torch.split(h1, (n_xi, l, n_xi), dim=1)
+        H21, H22, _ = torch.split(h2, (n_xi, l, n_xi), dim=1)
+        H31, H32, H33 = torch.split(h3, (n_xi, l, n_xi), dim=1)
+        P = H33
+        # NN state dynamics:
+        self.F = H31
+        self.B1 = H32
+        # NN output:
+        self.E = 0.5 * (H11 + P + self.Y - self.Y.T)
+        # v signal:  [Change the following 2 lines if we don't want a strictly acyclic REN!]
+        self.Lambda = torch.diag(H22)
+        self.D11 = -torch.tril(H22, diagonal=-1)
+        self.C1 = -H21
+
+    def forward(self, t, w, xi):
+        vec = torch.zeros(self.l)
+        vec[0] = 1
+        epsilon = torch.zeros(self.l)
+        v = F.linear(xi, self.C1[0, :]) + F.linear(w,
+                                                   self.D12[0, :])  # + self.bv[0]
+        epsilon = epsilon + vec * torch.tanh(v/self.Lambda[0])
+        for i in range(1, self.l):
+            vec = torch.zeros(self.l)
+            vec[i] = 1
+            v = F.linear(xi, self.C1[i, :]) + F.linear(epsilon,
+                                                       self.D11[i, :]) + F.linear(w, self.D12[i, :])  # self.bv[i]
+            epsilon = epsilon + vec * torch.tanh(v/self.Lambda[i])
+        E_xi_ = F.linear(xi, self.F) + F.linear(epsilon,
+                                                self.B1) + F.linear(w, self.B2)  # + self.bxi
+        xi_ = F.linear(E_xi_, self.E.inverse())
+        u = F.linear(xi, self.C2) + F.linear(epsilon, self.D21) + \
+            F.linear(w, self.D22)  # + self.bu
+        return u, xi_
+
+
+
+
 
 
 #Opten: Convex optimization problem as a layer
