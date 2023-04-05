@@ -48,8 +48,8 @@ hdd = 30
 ldd = 3
 odd = 1
 
-n_xi = 20  # nel paper n, numero di stati
-l = 20  # nel paper q, dimension of the square matrix D11 -- number of _non-linear layers_ of the REN
+n_xi = 25  # nel paper n, numero di stati
+l = 30  # nel paper q, dimension of the square matrix D11 -- number of _non-linear layers_ of the REN
 
 RENsys = REN(idd, odd, n_xi, l)
 Optl = OptNetf(1)

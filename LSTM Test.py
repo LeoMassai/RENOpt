@@ -13,44 +13,31 @@ import os
 from os.path import dirname, join as pjoin
 import torch
 from torch import nn
-from models import RNNModel, LSTModel, OptNetf, L2REN
+from models import RNNModel, LSTModel, OptNetf
 
 # Import Data
 
+N = 100  # number of samples
+L = 400  # length of each sample (number of values for each sine wave)
+T = 20  # width of the wave
+x = np.empty((N, L, 1), np.float32)  # instantiate empty array
+x[:, :, 0] = np.arange(L) + np.random.randint(-4 * T, 4 * T, N).reshape(N, 1)
+y = np.sin(x / 1.0 / T).astype(np.float32)
 
-folderpath = os.getcwd()
-
-filepath = pjoin(folderpath, 'datasetn.mat')
-
-data = scipy.io.loadmat(filepath)
-
-u, y = torch.from_numpy(data['u']).float(), torch.from_numpy(
-    data['y']).float()
-
-u = (u - u.min()) / (u.max() - u.min())
-#
-y = (y - y.min()) / (y.max() - y.min())
-
-
-
-
-ut = u[:70, :, :]
-yt = y[:70, :]
-
-us = u[71:, :, :]
-ys = y[71:, :]
+ut = torch.from_numpy(x)
+yt = torch.from_numpy(y)
 
 # u = u.double()
 # y = y.double()
 
-#t = np.arange(0, np.size(ut, 1) * Ts, Ts)
+# t = np.arange(0, np.size(ut, 1) * Ts, Ts)
 
 seed = 1
 torch.manual_seed(seed)
 
-idd = u.size(1)
-hdd = 50
-ldd = 5
+idd = 1
+hdd = 11
+ldd = 2
 odd = 1
 
 net = torch.nn.Sequential(
@@ -65,14 +52,13 @@ learning_rate = 1.0e-3
 optimizer = torch.optim.Adam(net.parameters(), lr=learning_rate)
 optimizer.zero_grad()
 
-t_end = 120
-epochs = 400
+
+epochs = 4200
 lossp = np.zeros(epochs)
 for epoch in range(epochs):
     optimizer.zero_grad()
     loss = 0
-    ym = net(ut.transpose(1, 2))
-    ym = torch.squeeze(ym)
+    ym = net(ut)
     loss = MSE(ym, yt)
     loss.backward()
     optimizer.step()
@@ -81,11 +67,11 @@ for epoch in range(epochs):
 
 # Simulate one forward
 
-ymv = net(us.transpose(1, 2))
+# ymv = net(us.transpose(1, 2))
 # #
 plt.figure()
-plt.plot(ys[12, :].detach().numpy())
-plt.plot(ymv[12, :].detach().numpy())
+plt.plot(yt[4, :, 0].detach().numpy())
+plt.plot(ym[4, :, 0].detach().numpy())
 #
 plt.show()
 #
