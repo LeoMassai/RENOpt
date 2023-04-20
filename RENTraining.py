@@ -57,7 +57,7 @@ n_xi = 20
 # nel paper n, numero di stati
 l = 30  # nel paper q, dimension of the square matrix D11 -- number of _non-linear layers_ of the REN
 
-RENsys = RENR(n, m, n_xi, l)
+RENsys = REN(n, m, n_xi, l)
 
 MSE = nn.MSELoss()
 
@@ -89,13 +89,11 @@ for epoch in range(epochs):
     loss.backward()
     optimizer.step()
     print(f"Epoch: {epoch + 1} \t||\t Loss: {loss}")
-    print(f"Gamma: {RENsys.sg**2}")
     lossp[epoch] = loss
     RENsys.set_model_param()
 
 # validation
 
-print(f"Gamma: {RENsys.sg ** 2}")
 
 ex = 13
 yREN_val = torch.zeros(t_end, RENsys.m)

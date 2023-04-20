@@ -6,6 +6,9 @@ Created on Mon Mar  6 11:24:52 2023
 @author: leo
 """
 
+import os
+
+os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1'
 import numpy as np  # linear algebra
 import torch
 import torch.nn as nn
@@ -13,6 +16,9 @@ import torch.nn.functional as F
 from torch.autograd import Variable
 from cvxpylayers.torch import CvxpyLayer
 import cvxpy as cp
+
+dtype = torch.float
+device = torch.device("cpu")
 
 
 class RNNModel(nn.Module):
@@ -225,7 +231,6 @@ class RENR(nn.Module):
         self.D22 = torch.zeros(m, n)
         self.set_model_param()
 
-
     def set_model_param(self):
         n_xi = self.n_xi
         l = self.l
@@ -282,3 +287,279 @@ class RENR(nn.Module):
             F.linear(w, self.D22)  # + self.bu
         return u, xi_
 
+
+class RENR2(nn.Module):
+    def __init__(self, n, m, n_xi, l):
+        super().__init__()
+        self.n = n  # nel paper m
+        self.n_xi = n_xi  # nel paper n
+        self.l = l  # nel paper q
+        self.m = m  # nel paper p
+        self.s = np.max((n, m))  # s nel paper, dimensione di X3 Y3
+
+        # # # # # # # # # Training parameters # # # # # # # # #
+        # Auxiliary matrices:
+        std = 1
+        self.X = nn.Parameter((torch.randn(2 * n_xi + l, 2 * n_xi + l) * std))
+        self.Y = nn.Parameter((torch.randn(n_xi, n_xi) * std))  # Y1 nel paper
+        # NN state dynamics:
+        self.B2 = nn.Parameter((torch.randn(n_xi, n) * std))
+        # NN output:
+        self.C2 = nn.Parameter((torch.randn(m, n_xi) * std))
+        self.D21 = nn.Parameter((torch.randn(m, l) * std))
+        self.X3 = nn.Parameter(torch.randn(self.s, self.s) * std)
+        self.Y3 = nn.Parameter(torch.randn(self.s, self.s) * std)
+        self.gamma = 0.7
+
+        # v signal:
+        self.D12 = nn.Parameter((torch.randn(l, n) * std))
+        # bias:
+        # self.bxi = nn.Parameter(torch.randn(n_xi))
+        # self.bv = nn.Parameter(torch.randn(l))
+        # self.bu = nn.Parameter(torch.randn(m))
+        # # # # # # # # # Non-trainable parameters # # # # # # # # #
+        # Auxiliary elements
+        self.epsilon = 0.001
+        self.F = torch.zeros(n_xi, n_xi)
+        self.B1 = torch.zeros(n_xi, l)
+        self.E = torch.zeros(n_xi, n_xi)
+        self.Lambda = torch.ones(l)
+        self.C1 = torch.zeros(l, n_xi)
+        self.D11 = torch.zeros(l, l)
+        self.Lq = torch.zeros(m, m)
+        self.Lr = torch.zeros(n, n)
+        self.D22 = torch.zeros(m, n)
+        self.set_model_param()
+
+
+    def set_model_param(self):
+        n_xi = self.n_xi
+        l = self.l
+        n = self.n
+        m = self.m
+        gamma = self.gamma
+        R = gamma * torch.eye(n, n)
+        Q = (-1 / gamma) * torch.eye(m, m)
+        M = F.linear(self.X3, self.X3) + self.Y3 - self.Y3.T + self.epsilon * torch.eye(self.s)
+        M_tilde = F.linear(torch.eye(self.s) - M,
+                           torch.inverse(torch.eye(self.s) + M).T)
+        Zeta = M_tilde[0:self.m, 0:self.n]
+        self.D22 = gamma * Zeta
+        R_capital = R - (1 / gamma) * F.linear(self.D22.T, self.D22.T)
+        C2_capital = torch.matmul(torch.matmul(self.D22.T, Q), self.C2)
+        D21_capital = torch.matmul(torch.matmul(self.D22.T, Q), self.D21) - self.D12.T
+        vec_R = torch.cat([C2_capital.T, D21_capital.T, self.B2], 0)
+        vec_Q = torch.cat([self.C2.T, self.D21.T, torch.zeros(n_xi, m)], 0)
+        H = torch.matmul(self.X.T, self.X) + self.epsilon * torch.eye(2 * n_xi + l) + torch.matmul(
+            torch.matmul(vec_R, torch.inverse(R_capital)), vec_R.T) - torch.matmul(
+            torch.matmul(vec_Q, Q), vec_Q.T)
+        h1, h2, h3 = torch.split(H, (n_xi, l, n_xi), dim=0)
+        H11, H12, H13 = torch.split(h1, (n_xi, l, n_xi), dim=1)
+        H21, H22, _ = torch.split(h2, (n_xi, l, n_xi), dim=1)
+        H31, H32, H33 = torch.split(h3, (n_xi, l, n_xi), dim=1)
+        P = H33
+        # NN state dynamics:
+        self.F = H31
+        self.B1 = H32
+        # NN output:
+        self.E = 0.5 * (H11 + P + self.Y - self.Y.T)
+        # v signal:  [Change the following 2 lines if we don't want a strictly acyclic REN!]
+        self.Lambda = torch.diag(H22)
+        self.D11 = -torch.tril(H22, diagonal=-1)
+        self.C1 = -H21
+
+    def forward(self, t, w, xi):
+        vec = torch.zeros(self.l)
+        vec[0] = 1
+        epsilon = torch.zeros(self.l)
+        v = F.linear(xi, self.C1[0, :]) + F.linear(w,
+                                                   self.D12[0, :])  # + self.bv[0]
+        epsilon = epsilon + vec * torch.tanh(v / self.Lambda[0])
+        for i in range(1, self.l):
+            vec = torch.zeros(self.l)
+            vec[i] = 1
+            v = F.linear(xi, self.C1[i, :]) + F.linear(epsilon,
+                                                       self.D11[i, :]) + F.linear(w, self.D12[i, :])  # self.bv[i]
+            epsilon = epsilon + vec * torch.tanh(v / self.Lambda[i])
+        E_xi_ = F.linear(xi, self.F) + F.linear(epsilon,
+                                                self.B1) + F.linear(w, self.B2)  # + self.bxi
+        xi_ = F.linear(E_xi_, self.E.inverse())
+        u = F.linear(xi, self.C2) + F.linear(epsilon, self.D21) + \
+            F.linear(w, self.D22)  # + self.bu
+        return u, xi_
+
+
+class RENRG(nn.Module):
+    def __init__(self, n, m, n_xi, l):
+        super().__init__()
+        self.gamma = torch.randn(1, 1, device=device, dtype=dtype)
+        self.n = n  # nel paper m
+        self.n_xi = n_xi  # nel paper n
+        self.l = l  # nel paper q
+        self.m = m  # nel paper p
+        self.s = np.max((n, m))  # s nel paper, dimensione di X3 Y3
+
+        # # # # # # # # # Training parameters # # # # # # # # #
+        # Auxiliary matrices:
+        std = 1
+        self.X = nn.Parameter((torch.randn(2 * n_xi + l, 2 * n_xi + l, device=device, dtype=dtype) * std))
+        self.Y = nn.Parameter((torch.randn(n_xi, n_xi, device=device, dtype=dtype) * std))  # Y1 nel paper
+        # NN state dynamics:
+        self.B2 = nn.Parameter((torch.randn(n_xi, n, device=device, dtype=dtype) * std))
+        # NN output:
+        self.C2 = nn.Parameter((torch.randn(m, n_xi, device=device, dtype=dtype) * std))
+        self.D21 = nn.Parameter((torch.randn(m, l, device=device, dtype=dtype) * std))
+        self.X3 = nn.Parameter(torch.randn(self.s, self.s, device=device, dtype=dtype) * std)
+        self.Y3 = nn.Parameter(torch.randn(self.s, self.s, device=device, dtype=dtype) * std)
+
+        # v signal:
+        self.D12 = nn.Parameter((torch.randn(l, n, device=device, dtype=dtype) * std))
+        # bias:
+        # self.bxi = nn.Parameter(torch.randn(n_xi))
+        # self.bv = nn.Parameter(torch.randn(l))
+        # self.bu = nn.Parameter(torch.randn(m))
+        # # # # # # # # # Non-trainable parameters # # # # # # # # #
+        # Auxiliary elements
+        self.epsilon = 0.001
+        self.F = torch.zeros(n_xi, n_xi, device=device, dtype=dtype)
+        self.B1 = torch.zeros(n_xi, l, device=device, dtype=dtype)
+        self.E = torch.zeros(n_xi, n_xi, device=device, dtype=dtype)
+        self.Lambda = torch.ones(l, device=device, dtype=dtype)
+        self.C1 = torch.zeros(l, n_xi, device=device, dtype=dtype)
+        self.D11 = torch.zeros(l, l, device=device, dtype=dtype)
+        self.Lq = torch.zeros(m, m, device=device, dtype=dtype)
+        self.Lr = torch.zeros(n, n, device=device, dtype=dtype)
+        self.D22 = torch.zeros(m, n, device=device, dtype=dtype)
+        self.set_model_param()
+
+    def set_model_param(self):
+        gamma = self.gamma
+        n_xi = self.n_xi
+        l = self.l
+        n = self.n
+        m = self.m
+        R = gamma * torch.eye(n, n, device=device, dtype=dtype)
+        Q = (-1 / gamma) * torch.eye(m, m, device=device, dtype=dtype)
+        M = F.linear(self.X3, self.X3) + self.Y3 - self.Y3.T + self.epsilon * torch.eye(self.s, device=device,
+                                                                                        dtype=dtype)
+        M_tilde = F.linear(torch.eye(self.s, device=device, dtype=dtype) - M,
+                           torch.inverse(torch.eye(self.s, device=device, dtype=dtype) + M).T)
+        Zeta = M_tilde[0:self.m, 0:self.n]
+        self.D22 = gamma * Zeta
+        R_capital = R - (1 / gamma) * F.linear(self.D22.T, self.D22.T)
+        C2_capital = torch.matmul(torch.matmul(self.D22.T, Q), self.C2)
+        D21_capital = torch.matmul(torch.matmul(self.D22.T, Q), self.D21) - self.D12.T
+        vec_R = torch.cat([C2_capital.T, D21_capital.T, self.B2], 0)
+        vec_Q = torch.cat([self.C2.T, self.D21.T, torch.zeros(n_xi, m, device=device, dtype=dtype)], 0)
+        H = torch.matmul(self.X.T, self.X) + self.epsilon * torch.eye(2 * n_xi + l, device=device,
+                                                                      dtype=dtype) + torch.matmul(
+            torch.matmul(vec_R, torch.inverse(R_capital)), vec_R.T) - torch.matmul(
+            torch.matmul(vec_Q, Q), vec_Q.T)
+        h1, h2, h3 = torch.split(H, (n_xi, l, n_xi), dim=0)
+        H11, H12, H13 = torch.split(h1, (n_xi, l, n_xi), dim=1)
+        H21, H22, _ = torch.split(h2, (n_xi, l, n_xi), dim=1)
+        H31, H32, H33 = torch.split(h3, (n_xi, l, n_xi), dim=1)
+        P = H33
+        # NN state dynamics:
+        self.F = H31
+        self.B1 = H32
+        # NN output:
+        self.E = 0.5 * (H11 + P + self.Y - self.Y.T)
+        # v signal:  [Change the following 2 lines if we don't want a strictly acyclic REN!]
+        self.Lambda = torch.diag(H22)
+        self.D11 = -torch.tril(H22, diagonal=-1)
+        self.C1 = -H21
+
+    def forward(self, t, w, xi):
+        vec = torch.zeros(self.l, device=device, dtype=dtype)
+        vec[0] = 1
+        epsilon = torch.zeros(self.l, device=device, dtype=dtype)
+        v = F.linear(xi, self.C1[0, :]) + F.linear(w,
+                                                   self.D12[0, :])  # + self.bv[0]
+        epsilon = epsilon + vec * torch.relu(v / self.Lambda[0])
+        for i in range(1, self.l):
+            vec = torch.zeros(self.l, device=device, dtype=dtype)
+            vec[i] = 1
+            v = F.linear(xi, self.C1[i, :]) + F.linear(epsilon,
+                                                       self.D11[i, :]) + F.linear(w, self.D12[i, :])  # self.bv[i]
+            epsilon = epsilon + vec * torch.relu(v / self.Lambda[i])
+        E_xi_ = F.linear(xi, self.F) + F.linear(epsilon,
+                                                self.B1) + F.linear(w, self.B2)  # + self.bxi
+        xi_ = F.linear(E_xi_, self.E.inverse())
+        u = F.linear(xi, self.C2) + F.linear(epsilon, self.D21) + \
+            F.linear(w, self.D22)  # + self.bu
+        return u, xi_
+
+
+class doubleREN(nn.Module):
+    def __init__(self, n, m, p, n_xi, n_xi2, l, l2):
+        super().__init__()
+        self.p = p
+        self.n = n  # nel paper m
+        self.n_xi = n_xi  # nel paper n
+        self.n_xi2 = n_xi2  # nel paper n
+        self.l = l  # nel paper q
+        self.l2 = l2  # nel paper q
+        self.m = m  # nel paper p
+        self.r1 = RENRG(self.n, self.m, self.n_xi, self.l, 0.3)
+        self.r2 = RENRG(self.m, self.p, self.n_xi2, self.l2, 0.5)
+
+        self.xx = nn.Parameter(torch.randn(1, 1, device=device, dtype=dtype))
+        self.yy = nn.Parameter(torch.randn(1, 1, device=device, dtype=dtype))
+
+        self.set_model_param()
+
+    def set_model_param(self):
+        x = 1 / (1 + torch.exp(-self.xx))
+        c = np.sqrt(2) + torch.exp(self.yy)
+        y = c ** 2
+        gamma1 = torch.max((y - torch.sqrt(y ** 2 - 4 * x)) / 2, (y + torch.sqrt(y ** 2 - 4 * x)) / 2)
+        gamma2 = y - gamma1
+        self.r1.gamma = gamma2
+        self.r2.gamma = gamma1
+
+        self.r1.set_model_param()
+        self.r2.set_model_param()
+
+    def forward(self, t, u, xi, xi2):
+        u1, xi = self.r1(t, u, xi)
+        u2, xi2 = self.r2(t, u1, xi2)
+        return u2, xi, xi2
+
+
+class doubleRENg(nn.Module):
+    def __init__(self, n, p, n_xi, n_xi2, l, l2):
+        super().__init__()
+        self.p = p
+        self.n = n  # nel paper m
+        self.n_xi = n_xi  # nel paper n
+        self.n_xi2 = n_xi2  # nel paper n
+        self.l = l  # nel paper q
+        self.l2 = l2  # nel paper q
+        self.r1 = RENRG(self.n, self.p, self.n_xi, self.l)
+        self.r2 = RENRG(self.p, self.n, self.n_xi2, self.l2)
+
+        self.x1 = nn.Parameter(torch.randn(1, 1, device=device, dtype=dtype))
+        self.x2 = nn.Parameter(torch.randn(1, 1, device=device, dtype=dtype))
+        self.y1 = nn.Parameter(torch.randn(1, 1, device=device, dtype=dtype))
+        self.y2 = nn.Parameter(torch.randn(1, 1, device=device, dtype=dtype))
+
+        self.set_model_param()
+
+    def set_model_param(self):
+        x1 = self.x1**2
+        x2 = self.x2**2
+        y1 = self.y1 ** 2
+        y2 = self.y2 ** 2
+        gamma1 = torch.sqrt(y1/(x1+y1))
+        gamma2 = torch.sqrt(y2/(x2+y2))
+        self.r1.gamma = gamma1
+        self.r2.gamma = gamma2
+
+        self.r1.set_model_param()
+        self.r2.set_model_param()
+
+    def forward(self, t, u, xi, xi2):
+        u1, xi = self.r1(t, u, xi)
+        u2, xi2 = self.r2(t, u1, xi2)
+        return u1, u2, xi, xi2

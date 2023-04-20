@@ -1,26 +1,43 @@
-import cvxpy as cp
-import numpy as np
+import torch
+import math
 
-gg = 0.15
-p1 = cp.Variable(1)
-p2 = cp.Variable(1)
-p3 = cp.Variable(1)
-x1 = np.array([0, p2 / 2, p1 / 2])
-x2 = np.array([p2 / 2, gg * p3, 0])
-x3 = np.array([-p1 / 2, 0, -p3])
 
-e1 = 0.68
-e2 = 0.65
 
-X = cp.bmat([[-e1 * p1, p2 / 2, -p1 / 2], [p2 / 2, -e2 * p2 + gg * p3, 0], [-p1 / 2, 0, -p3]])
+dtype = torch.float
+device = torch.device("mps")
 
-constraints = [X << 0, p1 >= 0.002, p2 >= 0.002, p3 >= 0.002]
+# Create random input and output data
+x = torch.linspace(-math.pi, math.pi, 2000, device=device, dtype=dtype)
+y = torch.sin(x)
 
-prob = cp.Problem(cp.Minimize(0),
-                  constraints)
-prob.solve()
+# Randomly initialize weights
+a = torch.randn((), device=device, dtype=dtype)
+b = torch.randn((), device=device, dtype=dtype)
+c = torch.randn((), device=device, dtype=dtype)
+d = torch.randn((), device=device, dtype=dtype)
 
-# Print result.
-print("The optimal value is", prob.value)
-print("A solution X is")
-print(p1.value, p2.value, p3.value, e1*e2)
+learning_rate = 1e-6
+for t in range(2000):
+    # Forward pass: compute predicted y
+    y_pred = a + b * x + c * x ** 2 + d * x ** 3
+
+    # Compute and print loss
+    loss = (y_pred - y).pow(2).sum().item()
+    if t % 100 == 99:
+        print(t, loss)
+
+# Backprop to compute gradients of a, b, c, d with respect to loss
+    grad_y_pred = 2.0 * (y_pred - y)
+    grad_a = grad_y_pred.sum()
+    grad_b = (grad_y_pred * x).sum()
+    grad_c = (grad_y_pred * x ** 2).sum()
+    grad_d = (grad_y_pred * x ** 3).sum()
+
+    # Update weights using gradient descent
+    a -= learning_rate * grad_a
+    b -= learning_rate * grad_b
+    c -= learning_rate * grad_c
+    d -= learning_rate * grad_d
+
+
+print(f'Result: y = {a.item()} + {b.item()} x + {c.item()} x^2 + {d.item()} x^3')

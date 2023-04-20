@@ -29,7 +29,7 @@ supp = {
     "L2": L2
 }
 
-order = ['L2', 'S', 'L']
+order = ['L2', 'L', 'S']
 
 
 def xp(order):
