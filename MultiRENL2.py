@@ -93,7 +93,6 @@ for epoch in range(epochs):
     print(f"Gamma1: {RENsys.r[1].gamma}")
     print(f"Gamma1: {RENsys.r[2].gamma}")
     print(f"GammaProd: {RENsys.r[0].gamma * RENsys.r[1].gamma * RENsys.r[2].gamma}")
-    print(f"GammaProd: {RENsys.r[0].X}")
     LOSS[epoch] = loss
 
 
