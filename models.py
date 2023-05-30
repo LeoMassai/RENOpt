@@ -689,12 +689,9 @@ class ThreeRENL2GershgorinShur(nn.Module):
         self.n = n  # nel paper m
         self.n_xi = n_xi  # nel paper n
         self.l = l  # nel paper q
-        self.r = []
         self.M = M
         self.N = N
-        for j in range(N):
-            self.r.append(RENRG(self.n, self.p, self.n_xi[j], self.l[j]))
-
+        self.r = nn.ModuleList([RENRG(self.n, self.p, self.n_xi[j], self.l[j]) for j in range(N)])
         self.y = nn.Parameter(torch.randn(N, device=device, dtype=dtype))
         self.z = nn.Parameter(torch.randn(N, device=device, dtype=dtype))
 

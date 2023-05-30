@@ -57,7 +57,7 @@ optimizer.zero_grad()
 
 t_end = yExp[0, 0].size - 1
 
-epochs = 150
+epochs = 65
 LOSS = np.zeros(epochs)
 for epoch in range(epochs):
     if epoch == epochs - epochs / 3:
@@ -83,15 +83,19 @@ for epoch in range(epochs):
         # ignorare da loss effetto condizione iniziale
 
     loss = loss / nExp
-    loss.backward(retain_graph=True)
+    loss.backward()
+    #loss.backward(retain_graph=True)
 
     optimizer.step()
+    RENsys.set_model_param()
     print(f"Epoch: {epoch + 1} \t||\t Loss: {loss}")
     print(f"Gamma1: {RENsys.r[0].gamma}")
     print(f"Gamma1: {RENsys.r[1].gamma}")
+    print(f"Gamma1: {RENsys.r[2].gamma}")
     print(f"GammaProd: {RENsys.r[0].gamma * RENsys.r[1].gamma * RENsys.r[2].gamma}")
+    print(f"GammaProd: {RENsys.r[0].X}")
     LOSS[epoch] = loss
-    RENsys.set_model_param()
+
 
 plt.figure('3')
 plt.plot(LOSS)
