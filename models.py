@@ -580,108 +580,6 @@ class multiRENL2(nn.Module):
         return y, xi
 
 
-class ThreeRENL2(nn.Module):
-    def __init__(self, N, M, n, p, n_xi, l):
-        super().__init__()
-        self.p = p
-        self.n = n  # nel paper m
-        self.n_xi = n_xi  # nel paper n
-        self.l = l  # nel paper q
-        self.r = []
-        self.M = M
-        self.N = N
-        for j in range(N):
-            self.r.append(RENRG(self.n, self.p, self.n_xi[j], self.l[j]))
-
-        self.pr = nn.Parameter(torch.randn(N, device=device, dtype=dtype))
-        self.y = nn.Parameter(torch.randn(N, device=device, dtype=dtype))
-
-        self.set_model_param()
-
-    def set_model_param(self):
-        M = self.M
-        pr = self.pr
-        y = self.y
-        N = self.N
-        pr2 = torch.exp(pr)
-        y2 = torch.exp(y)
-        PR = torch.diag(pr2)
-        A = torch.matmul(torch.matmul(torch.transpose(M, 0, 1), PR), M)
-        lmax = torch.trace(A)
-        pv = lmax + y2
-        P = torch.diag(pv)
-        R = torch.matmul(torch.inverse(P), PR)
-        gamma = R
-        gamma = torch.sqrt(torch.diagonal(gamma, 0))
-
-        for j in range(N):
-            self.r[j].gamma = gamma[j]
-            self.r[j].set_model_param()
-
-    def forward(self, t, ym, v, xim):
-        M = self.M
-        N = self.N
-        y = torch.zeros(N)
-        xi = []
-        y[0], xitemp = self.r[0](t, (- ym + v).unsqueeze(0), xim[0])
-        xi.append(xitemp)
-        for j in range(1, N):
-            y[j], xitemp2 = self.r[j](t, y[j - 1].unsqueeze(0).clone(), xim[j])
-            xi.append(xitemp2)
-        return y, xi
-
-
-class ThreeRENL2Gershgorin(nn.Module):
-    def __init__(self, N, M, n, p, n_xi, l):
-        super().__init__()
-        self.p = p
-        self.n = n  # nel paper m
-        self.n_xi = n_xi  # nel paper n
-        self.l = l  # nel paper q
-        self.r = []
-        self.M = M
-        self.N = N
-        for j in range(N):
-            self.r.append(RENRG(self.n, self.p, self.n_xi[j], self.l[j]))
-
-        self.pr = nn.Parameter(torch.randn(N, device=device, dtype=dtype))
-        self.y = nn.Parameter(torch.randn(N, device=device, dtype=dtype))
-
-        self.set_model_param()
-
-    def set_model_param(self):
-        M = self.M
-        pr = self.pr
-        y = self.y
-        N = self.N
-        pr2 = torch.exp(pr)
-        y2 = torch.exp(y)
-        PR = torch.diag(pr2)
-        A = torch.matmul(torch.matmul(torch.transpose(M, 0, 1), PR), M)
-        lmax = torch.max(torch.sum(torch.abs_(A), 1))
-        pv = lmax + y2
-        P = torch.diag(pv)
-        R = torch.matmul(torch.inverse(P), PR)
-        gamma = R
-        gamma = torch.sqrt(torch.diagonal(gamma, 0))
-
-        for j in range(N):
-            self.r[j].gamma = gamma[j]
-            self.r[j].set_model_param()
-
-    def forward(self, t, ym, v, xim):
-        M = self.M
-        N = self.N
-        y = torch.zeros(N)
-        xi = []
-        y[0], xitemp = self.r[0](t, (- ym + v).unsqueeze(0), xim[0])
-        xi.append(xitemp)
-        for j in range(1, N):
-            y[j], xitemp2 = self.r[j](t, y[j - 1].unsqueeze(0).clone(), xim[j])
-            xi.append(xitemp2)
-        return y, xi
-
-
 class ThreeRENL2GershgorinShur(nn.Module):
     def __init__(self, N, M, n, p, n_xi, l):
         super().__init__()
@@ -702,11 +600,11 @@ class ThreeRENL2GershgorinShur(nn.Module):
         y = self.y
         z = self.z
         N = self.N
-        y2 = torch.abs(y)
-        z2 = torch.abs(z)
-        pv = torch.sum(torch.abs(M), 0) + y2
-        x = torch.sum(torch.abs(M), 1) + z2
-        gamma = torch.sqrt(1/(x*pv))
+        y = torch.abs(y)
+        z = torch.abs(z)
+        pv = torch.sum(torch.abs(M), 0) + y
+        x = torch.sum(torch.abs(M), 1) + z
+        gamma = torch.sqrt(1 / (x * pv))
 
         for j in range(N):
             self.r[j].gamma = gamma[j]
@@ -721,4 +619,114 @@ class ThreeRENL2GershgorinShur(nn.Module):
         for j in range(1, N):
             y[j], xitemp2 = self.r[j](t, y[j - 1].unsqueeze(0).clone(), xim[j])
             xi.append(xitemp2)
+        return y, xi
+
+
+class ThreeRENL2GershgorinShurMIMO(nn.Module):
+    def __init__(self, N, M, n, p, n_xi, l):
+        super().__init__()
+        self.p = p
+        self.n = n  # nel paper m
+        self.n_xi = n_xi  # nel paper n
+        self.l = l  # nel paper q
+        self.M = M
+        self.N = N
+        self.r = nn.ModuleList([RENRG(self.n[j], self.p[j], self.n_xi[j], self.l[j]) for j in range(N)])
+        self.y = nn.Parameter(torch.randn(N, device=device, dtype=dtype))
+        self.z = nn.Parameter(torch.randn(N, device=device, dtype=dtype))
+
+        self.set_model_param()
+
+    def set_model_param(self):
+        M = self.M
+        y = self.y
+        z = self.z
+        N = self.N
+        y = torch.abs(y)
+        z = torch.abs(z)
+        pv = torch.sum(torch.abs(M), 0) + y
+        x = torch.sum(torch.abs(M), 1) + z
+        gamma = torch.sqrt(1 / (x * pv))
+
+        for j in range(N):
+            self.r[j].gamma = gamma[j]
+            self.r[j].set_model_param()
+
+    def forward(self, t, ym, v, xim):
+        y = torch.zeros(4)
+        xi = []
+        y[range(2)], xitemp = self.r[0](t, (- ym + v).unsqueeze(0), xim[0])
+        xi.append(xitemp)
+        y[2], xitemp2 = self.r[1](t, y[range(2)].unsqueeze(0).clone(), xim[1])
+        xi.append(xitemp2)
+        y[3], xitemp2 = self.r[2](t, y[2].unsqueeze(0).clone(), xim[2])
+        xi.append(xitemp2)
+        return y, xi
+
+
+class pizzicottina(nn.Module):
+    def __init__(self, N, M, n, p, n_xi, l):
+        super().__init__()
+        self.p = p
+        self.n = n  # nel paper m
+        self.n_xi = n_xi  # nel paper n
+        self.l = l  # nel paper q
+        self.M = M
+        self.N = N
+        self.r = nn.ModuleList([RENRG(self.n[j], self.p[j], self.n_xi[j], self.l[j]) for j in range(N)])
+        self.y = nn.Parameter(torch.randn(N, device=device, dtype=dtype))
+        self.z = nn.Parameter(torch.randn(N, device=device, dtype=dtype))
+
+        self.set_model_param()
+
+    def set_model_param(self):
+        M = self.M
+        y = self.y
+        z = self.z
+        N = self.N
+        y = torch.abs(y)
+        z = torch.abs(z)
+        startu = 0
+        stopu = 0
+        starty = 0
+        stopy = 0
+        for j, l in enumerate(self.r):
+            wideu = self.r[j].n
+            widey = self.r[j].m
+            startu = stopu
+            stopu = stopu + wideu
+            starty = stopy
+            stopy = stopy + widey
+            indexu = range(startu, stopu)
+            indexy = range(starty, stopy)
+            Mu = M[indexu, :]
+            My = M[:, indexy]
+            gamma = torch.sqrt((z[j] / (torch.max(torch.sum(torch.abs(Mu), 1)) * z[j] + 1))
+                               / (1 + torch.max(torch.sum(torch.abs(My), 0)) + y[j]))
+            self.r[j].gamma = gamma
+            self.r[j].set_model_param()
+
+    def forward(self, t, ym, d, xim):
+        M = self.M
+        u = torch.matmul(M, ym) + d
+        y_list = []
+        xi_list = []
+        start = 0
+        stop = 0
+        startx = 0
+        stopx = 0
+        for j, l in enumerate(self.r):
+            widex = self.r[j].n_xi
+            startx = stopx
+            stopx = stopx + widex
+            wide = self.r[j].n
+            start = stop
+            stop = stop + wide
+            index = range(start, stop)
+            indexx = range(startx, stopx)
+            yt, xitemp = self.r[j](t, u[index], xim[indexx])
+            y_list.append(yt)
+            xi_list.append(xitemp)
+        y = torch.cat(y_list)
+        xi = torch.cat(xi_list)
         return y, xi
