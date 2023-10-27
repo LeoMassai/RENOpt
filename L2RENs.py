@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-from models import doubleREN, RENR2
+from models import doubleRENg, RENR2
 import numpy as np
 import math
 import matplotlib.pyplot as plt
@@ -45,7 +45,7 @@ n_xi2 = 13
 l = 30  # nel paper q, dimension of the square matrix D11 -- number of _non-linear layers_ of the REN
 l2 = 12
 l2 = 16
-RENsys = doubleREN(n, m, p, n_xi, n_xi2, l, l2)
+RENsys = doubleRENg(n, m, p, n_xi, n_xi2, l, l2)
 
 # Define the system
 

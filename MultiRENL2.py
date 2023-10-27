@@ -59,7 +59,7 @@ optimizer.zero_grad()
 
 t_end = yExp[0, 0].size - 1
 
-epochs = 1
+epochs = 40
 LOSS = np.zeros(epochs)
 for epoch in range(epochs):
     if epoch == epochs - epochs / 3:

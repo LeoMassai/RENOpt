@@ -1,138 +1,99 @@
-from models import REN
+from models import RENR
 import numpy as np
 import math
 import matplotlib.pyplot as plt
 import scipy
 import os
+
+os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1'
 from os.path import dirname, join as pjoin
 import torch
 from torch import nn
-from models import RNNModel, OptNet, OptNetf, RENRG, doubleREN
+
+dtype = torch.float
+device = torch.device("cpu")
 
 plt.close('all')
-
 # Import Data
-
-
 folderpath = os.getcwd()
-
-filepath = pjoin(folderpath, 'datasetb.mat')
-
+filepath = pjoin(folderpath, 'fissocarrelli100.mat')
 data = scipy.io.loadmat(filepath)
 
-u, y, Ts = torch.from_numpy(data['u']).float(), torch.from_numpy(
-    data['y']).float(), data['Ts'].item()
+dExp, yExp, dExp_val, yExp_val, Ts = data['dExp'], data['yExp'], \
+    data['dExp_val'], data['yExp_val'], data['Ts'].item()
+nExp = yExp.size
+nExp = 2
 
-u = (u - u.min()) / (u.max() - u.min())
-#
-y = (y - y.min()) / (y.max() - y.min())
+t = np.arange(0, np.size(dExp[0, 0], 1) * Ts, Ts)
 
-nExp = 20
-
-ut = u[:nExp, :, :]
-yt = y[:nExp, :]
-
-us = u[nExp + 1:, :, :]
-ys = y[nExp + 1:, :]
-
-# u = u.double()
-# y = y.double()
-
-t = np.arange(0, np.size(ut, 1) * Ts, Ts)
+# plt.plot(t, yExp[0,-1])
+# plt.show()
 
 seed = 1
 torch.manual_seed(seed)
 
-idd = u.size(1)
-hdd = 30
-ldd = 3
-odd = 1
+n = 3  # input dimensions
 
-n = 2  # nel paper m, numero di ingressi
-n_xi = 20  # nel paper n, numero di stati
-l = 20  # nel paper q, dimension of the square matrix D11 -- number of _non-linear layers_ of the REN
-m = 5  # nel paper p, numero di uscite
-p = 1
+p = 6  # output dimensions
 
-n_xi = 20
-n_xi2 = 13
+n_xi = 11
 # nel paper n, numero di stati
-l = 30  # nel paper q, dimension of the square matrix D11 -- number of _non-linear layers_ of the REN
-l2 = 12
-l2 = 16
-RENsys = doubleREN(n, m, p, n_xi, n_xi2, l, l2)
+l = 10  # nel paper q, dimension of the square matrix D11 -- number of _non-linear layers_ of the RE
 
-params = list(RENsys.r1.parameters()) + list(RENsys.r2.parameters()) + list(RENsys.parameters())
+RENsys = RENR(n, p, n_xi, l)
 
+# Define the system
+
+# Define Loss function
 MSE = nn.MSELoss()
 
 # Define Optimization method
-learning_rate = 1.0e-3
+learning_rate = 1.0e-2
 optimizer = torch.optim.Adam(RENsys.parameters(), lr=learning_rate)
 optimizer.zero_grad()
 
-t_end = y.size(1)
-epochs = 60
-lossp = np.zeros(epochs)
+t_end = yExp[0, 0].shape[1] - 1
+
+epochs = 100
+LOSS = np.zeros(epochs)
 
 for epoch in range(epochs):
-
+    if epoch == epochs - epochs / 3:
+        # learning_rate = 1.0e-3
+        optimizer = torch.optim.Adam(RENsys.parameters(), lr=learning_rate)
     optimizer.zero_grad()
     loss = 0
-    for exp in range(nExp):
-        yREN = torch.zeros(t_end, RENsys.p)
-        xi = torch.zeros(RENsys.n_xi)
-        xi2 = torch.zeros(RENsys.n_xi2)
-        # Simulate one forward
-        for t in range(t_end):
-            yREN[t, :], xi, xi2 = RENsys(t, ut[exp, :, t], xi, xi2)
-        yRENl = yREN.squeeze()
-        loss = loss + MSE(yRENl[10:t_end], yt[exp, 10:t_end])
+    for exp in range(nExp - 1):
+        yRENm = torch.randn(6, t_end + 1, device=device, dtype=dtype)
+        xi = torch.randn(n_xi)
+        d = torch.from_numpy(dExp[0, exp]).float().to(device)
+        for t in range(1, t_end):
+            u = torch.tensor([d[2, t], d[7, t], d[10, t]])
+            yRENm[:, t], xi = RENsys(t, u, xi)
+        y = torch.from_numpy(yExp[0, exp]).float().to(device)
+        y = y.squeeze()
+        loss = loss + MSE(yRENm[:, 10:yRENm.size(1)], y[:, 10:t_end + 1])
+        # ignorare da loss effetto condizione iniziale
+
     loss = loss / nExp
+    loss.backward()
     # loss.backward(retain_graph=True)
-    loss.backward(retain_graph=True)
+
     optimizer.step()
-    lossp[epoch] = loss
     RENsys.set_model_param()
+
     print(f"Epoch: {epoch + 1} \t||\t Loss: {loss}")
-    print(f"Gamma1: {RENsys.r1.gamma}")
-    print(f"Gamma2: {RENsys.r2.gamma}")
+    print(f"Gamma1: {RENsys.sg ** 2}")
+    LOSS[epoch] = loss
 
-# Training
-exp = 12
-xi = torch.zeros(RENsys.n_xi)
-xi2 = torch.zeros(RENsys.n_xi2)
-yRENt = torch.zeros(t_end, RENsys.p)
-for t in range(t_end):
-    yRENt[t, :], xi, xi2 = RENsys(t, ut[exp, :, t], xi, xi2)
-
-plt.figure()
-plt.plot(yt[12, :].detach().numpy())
-plt.plot(yRENt.detach().numpy())
+plt.figure('3')
+plt.plot(LOSS)
+plt.title("LOSS")
 plt.show()
 
-# ex = 13
-# yREN_val = torch.zeros(t_end, RENsys.m)
-# for t in range(t_end):
-#     yREN_val[t, :], xi = RENsys(t, us[ex, :, t], xi)
-# yREN_val = yREN_val.squeeze()
-# lossVal = MSE(yREN, ys[ex, :])
-#
-# plt.figure()
-# plt.plot(ys[ex, :].detach().numpy(), label='Y_val')
-# plt.plot(yREN.detach().numpy(), label='Opt')
-# plt.title("validation")
-# plt.legend()
-# plt.show()
-
-# #
-# plt.figure()
-# plt.plot(ys[13, :].detach().numpy())
-# plt.plot(ymv[13, :].detach().numpy())
-# #
-# plt.show()
-#
-#
-plt.figure()
-plt.plot(lossp)
+plt.figure('1')
+plt.plot(yRENm[4, :].detach().numpy(), label='REN')
+plt.plot(y[4, :].detach().numpy(), label='y train')
+plt.title("training")
+plt.legend()
 plt.show()
