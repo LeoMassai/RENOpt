@@ -909,7 +909,7 @@ class pizzicottina2(nn.Module):
         return yf, xf
 
 
-class pizzicottina3(nn.Module):
+class pizzicottinaTank(nn.Module):
     def __init__(self, N, M, n, p, n_xi, l):
         super().__init__()
         self.p = p
@@ -918,30 +918,65 @@ class pizzicottina3(nn.Module):
         self.l = l  # nel paper q
         self.M = M
         self.N = N
-        self.r = nn.ModuleList([RENR(self.n[j], self.p[j], self.n_xi[j], self.l[j]) for j in range(N)])
+        self.r = nn.ModuleList([RENRG(self.n[j], self.p[j], self.n_xi[j], self.l[j]) for j in range(N)])
+        self.y = nn.Parameter(torch.randn(N, device=device, dtype=dtype))
+        self.q = nn.Parameter(torch.randn(6, device=device, dtype=dtype))
+        self.z = nn.Parameter(torch.randn(1, device=device, dtype=dtype))
+        self.gammaw = torch.randn(1, device=device, dtype=dtype)
+
         self.set_model_param()
 
     def set_model_param(self):
+        M = self.M
+        N = self.N
+        yp = torch.abs(self.y)
+        zp = torch.abs(self.z)
+        startu = 0
+        stopu = 0
+        starty = 0
+        stopy = 0
         for j, l in enumerate(self.r):
-            l.set_model_param()
+            wideu = self.r[j].n
+            widey = self.r[j].m
+            startu = stopu
+            stopu = stopu + wideu
+            starty = stopy
+            stopy = stopy + widey
+            indexu = range(startu, stopu)
+            indexy = range(starty, stopy)
+            Mu = M[indexu, :]
+            My = M[:, indexy]
+            gamma = torch.sqrt((zp / (torch.max(torch.sum(torch.abs(Mu), 1)) * zp + 1))
+                               / (1 + torch.max(torch.sum(torch.abs(My), 0)) + yp[j]))
+            self.r[j].gamma = gamma
+            self.r[j].set_model_param()
+            self.gammaw = torch.sqrt(zp)
 
-    def forward(self, t, d, xim):
-        u = torch.tensor([d[2], d[7], d[10]])
+    def forward(self, t, ym, d, xim):
+        M = self.M
+        u = torch.matmul(M, ym) + d
         y_list = []
         xi_list = []
+        start = 0
+        stop = 0
+        startx = 0
         stopx = 0
         for j, l in enumerate(self.r):
             widex = l.n_xi
             startx = stopx
             stopx = stopx + widex
+            wide = l.n
+            start = stop
+            stop = stop + wide
+            index = range(start, stop)
             indexx = range(startx, stopx)
-            yt, xitemp = l(t, u, xim[indexx])
+            yt, xitemp = l(t, u[index], xim[indexx])
             y_list.append(yt)
             xi_list.append(xitemp)
         y = torch.cat(y_list)
+        ya = torch.cat(y_list) * self.q
         xi = torch.cat(xi_list)
-        return y, xi
-
+        return y, xi, ya
 
 class pizzicottina4(nn.Module):
     def __init__(self, N, M, n, p, n_xi, l):
@@ -954,7 +989,7 @@ class pizzicottina4(nn.Module):
         self.N = N
         self.r = nn.ModuleList([RENRG(self.n[j], self.p[j], self.n_xi[j], self.l[j]) for j in range(N)])
         self.y = nn.Parameter(torch.randn(N, device=device, dtype=dtype))
-        self.q = nn.Parameter(torch.randn(6, device=device, dtype=dtype))
+        self.q = nn.Parameter(torch.randn(4, device=device, dtype=dtype))
         self.z = nn.Parameter(torch.randn(1, device=device, dtype=dtype))
         self.gammaw = torch.randn(1, device=device, dtype=dtype)
 
