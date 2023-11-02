@@ -16,7 +16,7 @@ device = torch.device("cpu")
 plt.close('all')
 # Import Data
 folderpath = os.getcwd()
-filepath = pjoin(folderpath, 'tank2.mat')
+filepath = pjoin(folderpath, 'tanklin.mat')
 data = scipy.io.loadmat(filepath)
 
 dExp, yExp, dExp_val, yExp_val, Ts = data['dExp'], data['yExp'], \
@@ -32,9 +32,9 @@ t = np.arange(0, np.size(dExp[0, 0], 1) * Ts, Ts)
 seed = 1
 torch.manual_seed(seed)
 
-n = 6  # input dimensions
+n = np.shape(dExp[0, 0])[0]  # input dimensions
 
-p = 4  # output dimensions
+p = np.shape(yExp[0, 0])[0]  # output dimensions
 
 n_xi = 11
 # nel paper n, numero di stati
@@ -54,7 +54,7 @@ optimizer.zero_grad()
 
 t_end = yExp[0, 0].shape[1] - 1
 
-epochs = 50
+epochs = 300
 LOSS = np.zeros(epochs)
 
 for epoch in range(epochs):
@@ -67,12 +67,10 @@ for epoch in range(epochs):
         yRENm = torch.randn(p, t_end + 1, device=device, dtype=dtype)
         xi = torch.randn(n_xi)
         d = torch.from_numpy(dExp[0, exp]).float().to(device)
-        d = d / torch.max(torch.abs(d))
         for t in range(1, t_end):
             yRENm[:, t], xi = RENsys(t, d[:, t - 1], xi)
         y = torch.from_numpy(yExp[0, exp]).float().to(device)
         y = y.squeeze()
-        y = y / torch.max(torch.abs(y))
         loss = loss + MSE(yRENm[:, 10:yRENm.size(1)], y[:, 10:t_end + 1])
         # ignorare da loss effetto condizione iniziale
 
@@ -95,23 +93,23 @@ plt.show()
 yRENm = torch.randn(p, t_end + 1, device=device, dtype=dtype)
 xi = torch.randn(n_xi)
 d = torch.from_numpy(dExp[0, exp]).float().to(device)
-d = d / torch.max(torch.abs(d))
+
 
 for t in range(1, t_end):
     yRENm[:, t], xi = RENsys(t, d[:, t - 1], xi)
 y = torch.from_numpy(yExp[0, exp]).float().to(device)
 y = y.squeeze()
-y = y / torch.max(torch.abs(y))
+
 
 plt.figure('1')
-plt.plot(yRENm[2, :].detach().numpy(), label='REN')
-plt.plot(y[2, :].detach().numpy(), label='y train')
+plt.plot(yRENm[0, :].detach().numpy(), label='REN')
+plt.plot(y[0, :].detach().numpy(), label='y train')
 plt.title("training")
 plt.legend()
 plt.show()
 
 plt.figure('1')
-plt.plot(d[3, :].detach().numpy(), label='REN')
+plt.plot(d[2, :].detach().numpy(), label='REN')
 plt.title("input")
 plt.legend()
 plt.show()
